@@ -4661,7 +4661,8 @@ function getTextContent(result: any): string {
 	return result.content
 		.filter((block: any) => block?.type === "text" && typeof block.text === "string")
 		.map((block: any) => block.text)
-		.join("\n");
+		.join("\n")
+		.replace(/\r\n?/g, "\n");
 }
 
 function collectNonEmptyLines(text: string, tailLimit?: number): { lines: string[]; total: number } {
@@ -4852,14 +4853,18 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 		return makeText(ctx.lastComponent, withBranch(formatOpenAiSuccessLine(name, lines[0], theme), theme));
 	}
 
-	const preview = lines.length === 1
-		? theme.fg(ctx.isError ? "error" : "dim", lines[0])
+	const previewLines = ctx.isError ? lines.slice(1) : lines;
+	if (previewLines.length === 0) {
+		return makeText(ctx.lastComponent, withBranch(statusText, theme));
+	}
+	const preview = previewLines.length === 1
+		? theme.fg(ctx.isError ? "error" : "dim", previewLines[0])
 		: buildPreviewText(
-			lines,
+			previewLines,
 			true,
 			theme,
 			previewLimit(),
-			lines.length,
+			previewLines.length,
 			(line) => theme.fg(ctx.isError ? "error" : "dim", line || " "),
 		);
 	return makeText(ctx.lastComponent, withBranch(`${statusText}\n${preview}`, theme));

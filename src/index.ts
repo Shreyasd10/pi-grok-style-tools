@@ -10,7 +10,9 @@ import type {
 	ReadToolDetails,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import {
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
+
+const {
 	AssistantMessageComponent,
 	CustomEditor,
 	CustomMessageComponent,
@@ -22,11 +24,16 @@ import {
 	createBashTool,
 	createEditTool,
 	createFindTool,
-	createGrepTool,
 	createLsTool,
 	createReadTool,
 	createWriteTool,
-} from "@earendil-works/pi-coding-agent";
+} = PiCodingAgent;
+
+// Atomic renamed the public grep factory to createSearchTool while Pi keeps
+// createGrepTool. Resolve the available export at runtime so the extension
+// loads in either host.
+const createGrepTool = (PiCodingAgent as Record<string, any>).createGrepTool
+	?? (PiCodingAgent as Record<string, any>).createSearchTool;
 import {
 	Container,
 	Markdown,

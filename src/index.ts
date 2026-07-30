@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 import type {
 	BashToolDetails,
@@ -13,6 +13,7 @@ import type {
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 
 const {
+	CONFIG_DIR_NAME,
 	AssistantMessageComponent,
 	CustomEditor,
 	CustomMessageComponent,
@@ -27,13 +28,15 @@ const {
 	createLsTool,
 	createReadTool,
 	createWriteTool,
+	getAgentDir,
 } = PiCodingAgent;
 
-// Atomic renamed the public grep factory to createSearchTool while Pi keeps
-// createGrepTool. Resolve the available export at runtime so the extension
-// loads in either host.
-const createGrepTool = (PiCodingAgent as Record<string, any>).createGrepTool
+const createContentSearchTool = (PiCodingAgent as Record<string, any>).createGrepTool
 	?? (PiCodingAgent as Record<string, any>).createSearchTool;
+
+if (typeof createContentSearchTool !== "function") {
+	throw new Error("Host does not export createGrepTool or createSearchTool");
+}
 import {
 	Container,
 	Markdown,
@@ -124,10 +127,10 @@ function readSettings(): SettingsFile {
 	if (_settingsCache && now - _settingsCache.timestamp < SETTINGS_CACHE_TTL_MS) {
 		return _settingsCache.value;
 	}
-	const cwdPath = `${process.cwd()}/.pi/settings.json`;
-	const homePath = `${process.env.HOME ?? ""}/.pi/settings.json`;
+	const projectPath = join(process.cwd(), CONFIG_DIR_NAME, "settings.json");
+	const globalPath = join(getAgentDir(), "settings.json");
 	const merged: SettingsFile = {};
-	for (const path of [cwdPath, homePath]) {
+	for (const path of [projectPath, globalPath]) {
 		try {
 			if (!path || !existsSync(path)) continue;
 			const raw = JSON.parse(readFileSync(path, "utf8"));
@@ -152,10 +155,8 @@ function bustSpinnerSettingsCache(): void {
 
 function writeSettingsKey(key: string, value: unknown): void {
 	_settingsCache = null; // invalidate cache on write
-	const home = process.env.HOME ?? "";
-	if (!home) return;
-	const dir = `${home}/.pi`;
-	const path = `${dir}/settings.json`;
+	const dir = getAgentDir();
+	const path = join(dir, "settings.json");
 	let settings: Record<string, unknown> = {};
 	try {
 		if (existsSync(path)) settings = JSON.parse(readFileSync(path, "utf8")) ?? {};
@@ -193,10 +194,17 @@ function setThemeBg(theme: unknown, key: string, value: string): void {
 	}
 }
 
-const PI_GLOBAL_THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
+const GLOBAL_THEME_KEYS = [
+	Symbol.for("@earendil-works/pi-coding-agent:theme"),
+	Symbol.for("@bastani/atomic:theme"),
+];
 
 function getGlobalPiTheme(): unknown {
-	return (globalThis as any)[PI_GLOBAL_THEME_KEY];
+	for (const key of GLOBAL_THEME_KEYS) {
+		const theme = (globalThis as any)[key];
+		if (theme) return theme;
+	}
+	return undefined;
 }
 
 /** Pi's ToolExecutionComponent reads `theme` from globalThis — keep it in sync with ctx.ui.theme. */
@@ -528,6 +536,7 @@ function grokVerbForTool(name: string, past: boolean): string {
 		read: ["Read", "Reading"],
 		bash: ["Ran", "Running"],
 		grep: ["Searched", "Searching"],
+		search: ["Searched", "Searching"],
 		find: ["Searched", "Searching"],
 		ls: ["Listed", "Listing"],
 		edit: ["Edited", "Editing"],
@@ -544,6 +553,7 @@ function grokNounForTool(name: string, count: number): string {
 		read: ["file", "files"],
 		bash: ["command", "commands"],
 		grep: ["pattern", "patterns"],
+		search: ["pattern", "patterns"],
 		find: ["pattern", "patterns"],
 		ls: ["dir", "dirs"],
 		edit: ["file", "files"],
@@ -559,6 +569,7 @@ function grokToolVerb(name: string): string {
 		read: "Read",
 		bash: "Run",
 		grep: "Search",
+		search: "Search",
 		find: "Search",
 		ls: "List",
 		edit: "Edit",
@@ -658,7 +669,11 @@ function getToolArgSummary(tool: any): string {
 		return value;
 	}
 	if (name === "bash") return summarizeText(args.command ?? "", 72);
-	if (name === "grep") return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
+	if (name === "grep" || name === "search") {
+		const paths = Array.isArray(args.paths) ? args.paths.join(", ") : args.paths;
+		const searchPath = args.path ?? paths;
+		return `"${summarizeText(args.pattern ?? "", 40)}"${searchPath ? ` in ${searchPath}` : ""}`;
+	}
 	if (name === "find") return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
 	if (name === "ls") return shortPath(process.cwd(), args.path ?? ".");
 	return summarizeText(getStringArg(args, "path", "file_path", "url", "query", "name", "subject", "tool", "description", "prompt") || name, 72);
@@ -4604,7 +4619,7 @@ function getMode<T extends string>(value: unknown, allowed: readonly T[], fallba
 	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-const CORE_TOOL_OVERRIDES = new Set(["read", "bash", "grep", "find", "ls", "write", "edit", "task"]);
+const CORE_TOOL_OVERRIDES = new Set(["read", "bash", "grep", "search", "find", "ls", "write", "edit", "task"]);
 
 const OPENAI_STYLE_TOOL_NAMES = new Set([
 	"question",
@@ -4957,6 +4972,7 @@ function installGrokPromptEditor(ctx: { ui?: any; hasUI?: boolean }): void {
 	try {
 		ctx.ui.setEditorComponent((tui: TUI, theme: EditorTheme, keybindings: any) => {
 			const editor = new GrokPromptEditor(tui, theme, keybindings);
+			if ("promptPrefix" in editor) (editor as any).promptPrefix = "";
 			// Prefer theme border when available
 			try {
 				const uiTheme = ctx.ui?.theme;
@@ -5484,23 +5500,25 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	const grepTool = createGrepTool(cwd);
+	const contentSearchTool = createContentSearchTool(cwd);
 	pi.registerTool({
-		name: "grep",
-		label: "grep",
-		description: grepTool.description,
-		parameters: grepTool.parameters,
+		name: contentSearchTool.name,
+		label: contentSearchTool.label,
+		description: contentSearchTool.description,
+		parameters: contentSearchTool.parameters,
 		async execute(toolCallId, params, signal, onUpdate) {
-			return grepTool.execute(toolCallId, params, signal, onUpdate);
+			return contentSearchTool.execute(toolCallId, params, signal, onUpdate);
 		},
-		renderCall(args, theme, ctx) {
+		renderCall(args: any, theme, ctx) {
 			syncToolCallStatus(ctx);
 			const summary = stableCallSummary(ctx, "_callSummary", () => {
 				let value = `\"${summarizeText(args.pattern, 40)}\"`;
-				if (args.path) value += ` in ${args.path}`;
+				const paths = Array.isArray(args.paths) ? args.paths.join(", ") : args.paths;
+				const searchPath = args.path ?? paths;
+				if (searchPath) value += ` in ${searchPath}`;
 				return value;
 			});
-			return makeText(ctx.lastComponent, toolHeader("Grep", summary, theme, toolStatusDot(ctx, theme)));
+			return makeText(ctx.lastComponent, toolHeader("Search", summary, theme, toolStatusDot(ctx, theme)));
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {

@@ -31,6 +31,19 @@ Do **not** load alongside `pi-claude-style-tools` (both patch `Loader.prototype`
 
 Then `/reload` in an interactive session.
 
+### Atomic
+
+Atomic isolates extensions in an RPC child by default, which prevents UI prototype patches and custom editor components from reaching the parent TUI. Apply the managed compatibility patch to run Atomic's interactive engine in-process:
+
+```bash
+npm run atomic:patch
+npm run atomic:check
+```
+
+The patch is guarded against unknown Atomic versions and may need to be reapplied after Atomic updates. It also links `grok-dark.json` into `~/.atomic/agent/themes/` because Atomic resolves the selected theme before package and legacy themes are registered. Temporarily restore isolation with `ATOMIC_DISABLE_INTERACTIVE_ENGINE_ISOLATION=0 atomic`, or remove the patch with `npm run atomic:rollback`.
+
+Configure the package and `"theme": "grok-dark"` in `~/.atomic/agent/settings.json`.
+
 ## What you get
 
 - GrokNight theme (`grok-dark`)
@@ -45,7 +58,7 @@ Then `/reload` in an interactive session.
 
 ## Configuration
 
-Useful settings in `.pi/settings.json` or `~/.pi/settings.json` (same keys as the Claude-style slim fork where applicable):
+Useful settings in `.pi/settings.json`, `~/.pi/agent/settings.json`, `.atomic/settings.json`, or `~/.atomic/agent/settings.json` (same keys as the Claude-style slim fork where applicable):
 
 ```json
 {

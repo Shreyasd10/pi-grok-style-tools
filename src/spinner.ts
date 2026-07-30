@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,10 @@ function readSpinnerSettings(): { adaptive: boolean; verbColor: string; statusCo
 	let adaptive = true;
 	let verbColor = "accent";
 	let statusColor = "muted";
-	const paths = [`${process.cwd()}/.pi/settings.json`, `${process.env.HOME ?? ""}/.pi/settings.json`];
+	const paths = [
+		join(process.cwd(), CONFIG_DIR_NAME, "settings.json"),
+		join(getAgentDir(), "settings.json"),
+	];
 	for (const p of paths) {
 		try {
 			if (!p || !existsSync(p)) continue;

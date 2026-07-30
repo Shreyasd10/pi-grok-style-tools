@@ -16,11 +16,15 @@
   ],
   "files": [
     "src",
+    "scripts",
     "theme",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "atomic:patch": "node ./scripts/patch-atomic-grok-ui.mjs apply",
+    "atomic:check": "node ./scripts/patch-atomic-grok-ui.mjs check",
+    "atomic:rollback": "node ./scripts/patch-atomic-grok-ui.mjs rollback",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

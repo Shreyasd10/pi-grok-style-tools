@@ -1948,6 +1948,10 @@ function visitMarkdownDescendants(root: unknown, visit: (md: InstanceType<typeof
 
 function patchUserMessageRender(): void {
 	const proto = UserMessageComponent.prototype as any;
+	// Keep the host renderer: omp's UserMessageComponent keeps its text in
+	// private fields, so we reuse the host's rendered lines and strip their
+	// chrome (bg codes + Box padding) instead of re-rendering from `.text`.
+	const originalRender = proto.render;
 	// Always install latest renderer (do not wrap a prior patch).
 	proto.render = function patchedUserMessageRender(width: number) {
 		const cached = messageRenderCacheHit(this, width);
@@ -1963,27 +1967,53 @@ function patchUserMessageRender(): void {
 		const markdownTheme = (this as any).markdownTheme;
 		const theme = (this as any).theme ?? getGlobalPiTheme();
 		let body: string[] = [""];
-		try {
-			const md = new Markdown(
-				rawText,
-				0,
-				0,
-				markdownTheme,
-				{
-					color: (content: string) =>
-						theme && typeof theme.fg === "function"
-							? theme.fg("userMessageText", content)
-							: content,
-				},
-				{ preserveOrderedListMarkers: true, preserveBackslashEscapes: true },
-			);
-			const renderedMd = md.render(textWidth);
-			body = trimRenderedBlankLines(
-				(Array.isArray(renderedMd) ? renderedMd : []).map((line: string) => cleanUserMessageLine(line)),
-			).filter((line: string) => !isBlankLine(line));
-			if (body.length === 0) body = [""];
-		} catch {
-			body = [cleanUserMessageLine(rawText)];
+		if (rawText) {
+			// pi-style component: text is available directly.
+			try {
+				const md = new Markdown(
+					rawText,
+					0,
+					0,
+					markdownTheme,
+					{
+						color: (content: string) =>
+							theme && typeof theme.fg === "function"
+								? theme.fg("userMessageText", content)
+								: content,
+					},
+					{ preserveOrderedListMarkers: true, preserveBackslashEscapes: true },
+				);
+				const renderedMd = md.render(textWidth);
+				body = trimRenderedBlankLines(
+					(Array.isArray(renderedMd) ? renderedMd : []).map((line: string) => cleanUserMessageLine(line)),
+				).filter((line: string) => !isBlankLine(line));
+				if (body.length === 0) body = [""];
+			} catch {
+				body = [cleanUserMessageLine(rawText)];
+			}
+		} else if (typeof originalRender === "function") {
+			// omp component: reuse the host renderer's output.
+			try {
+				const hostLines = originalRender.call(this, width);
+				const raws = (Array.isArray(hostLines) ? hostLines : []).map((l: unknown) => String(l ?? ""));
+				// OSC133 zones survive stripAnsi; drop them so padding rows are
+				// recognized as blank and don't skew the shared-padding minimum.
+				const plains = raws.map((l: string) => stripAnsi(stripOsc133Zones(l)));
+				const nonBlank = plains.filter((l: string) => l.trim() !== "");
+				const minLead = nonBlank.length
+					? Math.min(...nonBlank.map((l: string) => ((l.match(/^ */)?.[0] ?? "").length)))
+					: 0;
+				body = raws
+					.map((raw: string, i: number) => (plains[i].trim() !== "" ? cleanUserMessageLine(raw) : null))
+					.filter((l: string | null): l is string => l !== null)
+					.map((l: string) => {
+						const lead = (l.match(/^(\x1b\[[0-9;]*m)*/)?.[0] ?? "");
+						return lead + l.slice(lead.length).slice(minLead);
+					});
+				if (body.length === 0) body = [""];
+			} catch {
+				body = [""];
+			}
 		}
 
 		const arrow = theme && typeof theme.fg === "function"
@@ -4902,6 +4932,24 @@ const GROK_PROMPT_BORDER_ACTIVE = "\x1b[38;2;80;80;88m"; // #505058
 const GROK_PROMPT_FG = "\x1b[38;2;200;200;200m"; // #c8c8c8
 const GROK_PROMPT_PLACEHOLDER = "\x1b[38;2;108;108;108m"; // #6c6c6c
 
+// The base editor renders omp's status line as its first row (where the top
+// border would be): branch glyph + model/dir/ctx chips. Pull that row out of
+// the prompt box and render it underneath instead.
+function isStatusRow(raw: string): boolean {
+	const plain = stripAnsi(raw).trimEnd();
+	if (/^─+$/.test(plain)) return false;
+	if (/^\+--\s/.test(plain)) return true;
+	return /\[[MTD]\]/.test(plain) && plain.includes(" > ");
+}
+
+// omp's editor draws `+-`/`-+` as the input-area corner markers, wrapped in
+// color codes; drop them (and surrounding ANSI/space) inside the box.
+function trimInputRow(raw: string): string {
+	const head = /^(?:\x1b\[[0-9;]*m|\s)*/;
+	const tailMarker = /\s*-\+(?:\x1b\[[0-9;]*m)?$/;
+	return raw.replace(head, "").replace(/^\+-/, "").replace(head, "").replace(tailMarker, "");
+}
+
 class GrokPromptEditor extends CustomEditor {
 	render(width: number): string[] {
 		const w = Math.max(1, width);
@@ -4933,11 +4981,21 @@ class GrokPromptEditor extends CustomEditor {
 		}
 		if (content.length === 0) content.push("");
 
+		// omp renders its status line as the first editor row; show it below the
+		// box instead of inside it. The cursor/input rows stay in the box.
+		const statusRows: string[] = [];
+		let inputRows = content;
+		if (isStatusRow(content[0] ?? "")) {
+			statusRows.push(content[0]);
+			inputRows = content.slice(1);
+			if (inputRows.length === 0) inputRows.push("");
+		}
+
 		const out: string[] = [];
 		out.push(truncateToWidth(`${borderAnsi}╭${"─".repeat(Math.max(0, w - 2))}╮${RESET}`, w, ""));
 
 		let firstContent = true;
-		for (const raw of content) {
+		for (const raw of inputRows) {
 			const plain = stripAnsi(raw);
 			const isScroll = (plain.includes("↑") || plain.includes("↓")) && !/\x1b\[/.test(raw);
 			let body: string;
@@ -4946,10 +5004,10 @@ class GrokPromptEditor extends CustomEditor {
 			} else if (firstContent) {
 				firstContent = false;
 				// ❯ takes 2 columns; trim editor line to leave room then prefix.
-				const inner = truncateToWidth(raw.replace(/^\s+/, ""), Math.max(1, contentWidth - 2), "");
+				const inner = truncateToWidth(trimInputRow(raw), Math.max(1, contentWidth - 2), "");
 				body = truncateToWidth(`${GROK_PROMPT_FG}❯ ${RESET}${inner}`, contentWidth, "");
 			} else {
-				const inner = truncateToWidth(raw.replace(/^\s+/, ""), Math.max(1, contentWidth - 2), "");
+				const inner = truncateToWidth(trimInputRow(raw), Math.max(1, contentWidth - 2), "");
 				body = truncateToWidth(`  ${inner}`, contentWidth, "");
 			}
 			const pad = Math.max(0, contentWidth - visibleWidth(body));
@@ -4958,6 +5016,10 @@ class GrokPromptEditor extends CustomEditor {
 		}
 
 		out.push(truncateToWidth(`${borderAnsi}╰${"─".repeat(Math.max(0, w - 2))}╯${RESET}`, w, ""));
+		// Status line underneath the box (base render already styles it).
+		for (const statusRaw of statusRows) {
+			out.push(truncateToWidth(statusRaw, w, ""));
+		}
 		return out.map((line) => {
 			const vw = visibleWidth(line);
 			if (vw === w) return line;

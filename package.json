@@ -22,9 +22,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "atomic:patch": "node ./scripts/patch-atomic-grok-ui.mjs apply",
-    "atomic:check": "node ./scripts/patch-atomic-grok-ui.mjs check",
-    "atomic:rollback": "node ./scripts/patch-atomic-grok-ui.mjs rollback",
+    "atomic:patch": "node ./scripts/patch-atomic-grok-ui.mjs apply && node ./scripts/install-atomic-wrapper.mjs install",
+    "atomic:check": "node ./scripts/patch-atomic-grok-ui.mjs check && node ./scripts/install-atomic-wrapper.mjs check",
+    "atomic:rollback": "node ./scripts/patch-atomic-grok-ui.mjs rollback && node ./scripts/install-atomic-wrapper.mjs uninstall",
+    "atomic:wrapper": "node ./scripts/install-atomic-wrapper.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

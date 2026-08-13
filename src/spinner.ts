@@ -344,12 +344,14 @@ export default function (pi: ExtensionAPI) {
 		const cols = Math.max(40, Number(process.stdout?.columns) || 80);
 		// Loader adds `⠋ ` (~2 cols); leave room for that.
 		const usable = Math.max(20, cols - 4);
-		const leftStyled = `${ACCENT_FG}${leftLabel}${RESET}`;
-		const rightStyled = statusText(rightParts.join(" · "));
+		const rightPlain = rightParts.join(" · ");
 		const leftPlainLen = leftLabel.length;
-		const rightPlainLen = rightParts.join(" · ").length;
+		const rightPlainLen = rightPlain.length;
 		const gap = Math.max(1, usable - leftPlainLen - rightPlainLen);
-		return `${leftStyled}${" ".repeat(gap)}${rightStyled}`;
+		// Plain text only: omp's loading/status path mangles embedded truecolor
+		// SGR (e.g. leaves `154;247mThinking...` from `#bb9af7`). Loader colors
+		// the whole message via messageColorFn / spinnerColorFn instead.
+		return `${leftLabel}${" ".repeat(gap)}${rightPlain}`;
 	}
 
 	function setResponseTextBlockLength(index: number, length: number): void {
@@ -574,7 +576,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (activeCtx?.hasUI) {
-			const message = `${STATUS_DIM}◆ Turn took ${formatDuration(elapsed)}${RESET}`;
+			const message = `◆ Turn took ${formatDuration(elapsed)}`;
 			lastWorkingMessage = message;
 			try {
 				activeCtx.ui.setWorkingMessage(message);

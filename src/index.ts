@@ -71,7 +71,7 @@ const COMPONENT_PARENT = Symbol.for("pi-grok-style-tools:component-parent");
 const PARENT_TRACKING_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-parent-tracking");
 const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-tool-cache-invalidation");
 const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-custom-message-render");
-const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-user-message-render-v16");
+const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-user-message-render-v17");
 const USER_SENT_AT = Symbol.for("pi-grok-style-tools:user-sent-at");
 const USER_MESSAGE_HOST_RENDER = Symbol.for("pi-grok-style-tools:user-message-host-render");
 const UI_NOTIFY_PATCH_FLAG = Symbol.for("pi-grok-style-tools:patched-ui-notifications-v2");
@@ -2071,7 +2071,7 @@ function resolveUserSentAt(comp: any, text: string): number {
 	return comp[USER_SENT_AT];
 }
 
-/** Grok UserPromptBlock: elevated bg on content rows, with one grey row above and below. */
+/** Grok UserPromptBlock: elevated bg + 1-row grey vpad above/below (`PromptConfig.vpad`). */
 function paintUserBand(
 	bodies: string[],
 	width: number,
